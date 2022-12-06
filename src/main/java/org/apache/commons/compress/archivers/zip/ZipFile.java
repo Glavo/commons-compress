@@ -163,6 +163,7 @@ public class ZipFile implements Closeable {
 
     private long centralDirectoryStartDiskNumber, centralDirectoryStartRelativeOffset;
     private long centralDirectoryStartOffset;
+    private long firstLocalFileHeaderOffset = 0L;
 
     /**
      * Opens the given file for reading, assuming "UTF8" for file names.
@@ -721,6 +722,16 @@ public class ZipFile implements Closeable {
     }
 
     /**
+     * Offset of the first local file header in the file.
+     *
+     * @return offset of the first local file header in the file.
+     * @since 1.23
+     */
+    public long getFirstLocalFileHeaderOffset() {
+        return firstLocalFileHeaderOffset;
+    }
+
+    /**
      * Ensures that the close method of this zipfile is called when
      * there are no more references to it.
      * @see #close()
@@ -896,7 +907,7 @@ public class ZipFile implements Closeable {
         ze.setName(entryEncoding.decode(fileName), fileName);
 
         // LFH offset,
-        ze.setLocalHeaderOffset(ZipLong.getValue(cfhBuf, off));
+        ze.setLocalHeaderOffset(ZipLong.getValue(cfhBuf, off) + firstLocalFileHeaderOffset);
         // data offset will be filled later
         entries.add(ze);
 
@@ -1038,21 +1049,20 @@ public class ZipFile implements Closeable {
         /* maximum length of zipfile comment */ + ZIP64_MAGIC_SHORT;
 
     /**
-     * Offset of the field that holds the location of the first
+     * Offset of the field that holds the location of the size of
      * central directory entry inside the "End of central directory
      * record" relative to the start of the "End of central directory
      * record".
      */
-    private static final int CFD_LOCATOR_OFFSET =
-        /* end of central dir signature    */ WORD
-        /* number of this disk             */ + SHORT
-        /* number of the disk with the     */
-        /* start of the central directory  */ + SHORT
-        /* total number of entries in      */
-        /* the central dir on this disk    */ + SHORT
-        /* total number of entries in      */
-        /* the central dir                 */ + SHORT
-        /* size of the central directory   */ + WORD;
+    private static final int CFD_LENGTH_OFFSET =
+            /* end of central dir signature    */ WORD
+            /* number of this disk             */ + SHORT
+            /* number of the disk with the     */
+            /* start of the central directory  */ + SHORT
+            /* total number of entries in      */
+            /* the central dir on this disk    */ + SHORT
+            /* total number of entries in      */
+            /* the central dir                 */ + SHORT;
 
     /**
      * Offset of the field that holds the disk number of the first
@@ -1253,6 +1263,8 @@ public class ZipFile implements Closeable {
      */
     private void positionAtCentralDirectory32()
         throws IOException {
+
+
         if (isSplitZipArchive) {
             skipBytes(CFD_DISK_OFFSET);
             shortBbuf.rewind();
@@ -1267,12 +1279,20 @@ public class ZipFile implements Closeable {
             ((ZipSplitReadOnlySeekableByteChannel) archive)
                 .position(centralDirectoryStartDiskNumber, centralDirectoryStartRelativeOffset);
         } else {
-            skipBytes(CFD_LOCATOR_OFFSET);
+            long endOfCentralDirectoryRecordOffset = archive.position();
+
+            skipBytes(CFD_LENGTH_OFFSET);
+            wordBbuf.rewind();
+            IOUtils.readFully(archive, wordBbuf);
+            long centralDirectoryLength = ZipLong.getValue(wordBuf);
+
             wordBbuf.rewind();
             IOUtils.readFully(archive, wordBbuf);
             centralDirectoryStartDiskNumber = 0;
             centralDirectoryStartRelativeOffset = ZipLong.getValue(wordBuf);
-            archive.position(centralDirectoryStartRelativeOffset);
+
+            firstLocalFileHeaderOffset = endOfCentralDirectoryRecordOffset - centralDirectoryLength - centralDirectoryStartRelativeOffset;
+            archive.position(centralDirectoryStartRelativeOffset + firstLocalFileHeaderOffset);
         }
     }
 
